@@ -1,5 +1,5 @@
 # go_elastic
-Library for quering elastic
+Library for quering elasticSearch
 
 ## Usage
 
@@ -24,7 +24,7 @@ You will need to call Init() function with Config{}
 **Pass** - optional
 
 ```
-err := Init(Config{
+err := elastic.Init(Config{
     Host: "localhost",
     Port: 9200,
     User: "user",
@@ -41,7 +41,7 @@ if err != nil {
 Search function returns list of "hits" from the elastic response, a number of found entities and an error 
 
 ```
-entities, totalFound, err := Search(map[string]interface{}{
+entities, totalFound, err := elastic.Search(map[string]interface{}{
     "query": map[string]interface{}{
         "match_all": map[string]string{
             "name": "name 1",
@@ -75,7 +75,7 @@ type SetResult struct {
 ```
 
 ```
-entities := SetParams{
+entities := elastic.SetParams{
     []map[string]interface{}{
         {"Name": "name 3"},
         {"Name": "name 4", "City": "city 4"},
@@ -90,7 +90,7 @@ entities := SetParams{
     },
 }
 
-result := Set(entities, "test")
+result := elastic.Set(entities, "test")
 
 if len(result.Errors) > 0 {
    for _, err := range result.Errors {
@@ -115,7 +115,7 @@ entities := []map[string]interface{}{
     {"Name": "name 4", "City": "city 4"},
 }
 
-added, failed, errs := Add(entities, "test")
+added, failed, errs := elastic.Add(entities, "test")
 if len(errs) > 0 {
     for _, err := range errs {
         fmt.Errorf("Error from elastic.Add(): %v", err)
@@ -134,7 +134,7 @@ entities := []map[string]interface{}{
     {"Name": "name 4", "City": "city 4"},
 }
 
-updated, failed, errs := Update(entities, "test")
+updated, failed, errs := elastic.Update(entities, "test")
 if len(errs) > 0 {
     for _, err := range errs {
         fmt.Errorf("Error from elastic.Update(): %v", err)
@@ -153,7 +153,7 @@ entities := []map[string]interface{}{
     {"Name": "name 4", "City": "city 4"},
 }
 
-deleted, failed, errs := Delete(entities, "test")
+deleted, failed, errs := elastic.Delete(entities, "test")
 if len(errs) > 0 {
     for _, err := range errs {
         fmt.Errorf("Error from elastic.Delete(): %v", err)
