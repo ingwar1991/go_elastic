@@ -38,7 +38,7 @@ if err != nil {
 ### Searching
 `func Search(query map[string]interface{}, indexName string) ([]interface{}, int, error) {}`
 
-Search function returns list of "hits" from the elastic response a number of found entities or error 
+Search function returns list of "hits" from the elastic response, a number of found entities and an error 
 
 ```
 entities, totalFound, err := Search(map[string]interface{}{
@@ -56,7 +56,8 @@ if err != nil {
 
 ### Adding/Updating/Deleting
 Library has both separated Add/Update/Delete methods and combined Set method
-All methods get last _optional_ parameter `waitToRefresh` for waiting for elastic to refresh the index data
+
+All methods get last **_optional_** parameter `waitToRefresh` for waiting for elastic to refresh the index data
 > "?refresh=wait_for"
 
 #### Set
