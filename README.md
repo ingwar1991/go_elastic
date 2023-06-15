@@ -35,8 +35,46 @@ if err != nil {
 }
 ```
 
-### Searching
-`func Search(query map[string]interface{}, indexName string) ([]interface{}, int, error) {}`
+### Choose docs or indexes
+The library has 2 entities with unique methods:
+* Docs
+* Indexes
+
+```
+elastic.Docs()
+elastic.Indexes()
+```
+
+#### Docs methods
+
+```
+Get(entityId string, indexName string) (map[string]interface{}, error)
+
+MGet(entityIds []string, indexName string) ([]map[string]interface{}, error)
+
+Search(query map[string]interface{}, indexName string) ([]interface{}, int, error)
+
+Create(entity map[string]interface{}, indexName string, waitToRefresh ...bool) (string, error)
+
+Update(entity map[string]interface{}, indexName string, waitToRefresh ...bool) (string, error)
+
+Delete(entity map[string]interface{}, indexName string, waitToRefresh ...bool) (string, error)
+
+Set(entities SetParams, indexName string, waitToRefresh ...bool) SetResult
+```
+
+##### Get
+Getting entity by entityId( _id )
+
+`func Get(entityId string, indexName string) (map[string]interface{}, error)`
+
+##### MGet
+Gets multiple entities by ids( _id )
+
+`func MGet(entityIds []string, indexName string) ([]map[string]interface{}, error)`
+
+##### Searching
+`func Search(query map[string]interface{}, indexName string) ([]interface{}, int, error)`
 
 Search function returns list of "hits" from the elastic response, a number of found entities and an error 
 
@@ -54,14 +92,25 @@ if err != nil {
 }
 ```
 
-### Adding/Updating/Deleting
-Library has both separated Add/Update/Delete methods and combined Set method
+#### Creating/Updating/Deleting
+Library has both separated Create/Update/Delete methods and combined Set method
 
 All methods get last **_optional_** parameter `waitToRefresh` for waiting for elastic to refresh the index data
 > "?refresh=wait_for"
 
-#### Set
-`func Set(entities SetParams, indexName string, waitToRefresh ...bool) SetResult {}`
+All but `Set` methods expect entity as first parameter and return entityId( `_id` ) and optionally error
+
+##### Create
+`func Create(entity map[string]interface{}, indexName string, waitToRefresh ...bool) (string, error)`
+
+##### Update 
+`func Update(entity map[string]interface{}, indexName string, waitToRefresh ...bool) (string, error)`
+
+##### Delete
+`func Delete(entity map[string]interface{}, indexName string, waitToRefresh ...bool) (string, []error)`
+
+##### Set
+`func Set(entities SetParams, indexName string, waitToRefresh ...bool) SetResult`
 
 Set function return SetResult
 ```
@@ -106,59 +155,17 @@ fmt.Sprintf("Result[ added: %v, updated: %v, deleted: %v, failed: %v ]",
 )
 ```
 
-#### Add
-`func Add(entities []map[string]interface{}, indexName string, waitToRefresh ...bool) (int, int, []error) {}`
-
+#### Indexes methods
 ```
-entities := []map[string]interface{}{
-    {"Name": "name 3"},
-    {"Name": "name 4", "City": "city 4"},
-}
+Get(indexName string, params map[string]interface{}) (map[string]interface{}, error)
 
-added, failed, errs := elastic.Add(entities, "test")
-if len(errs) > 0 {
-    for _, err := range errs {
-        fmt.Errorf("Error from elastic.Add(): %v", err)
-    }
-}
+Exists(indexName string, params map[string]interface{}) ([]interface{}, error)
 
-fmt.Sprintf("Added: %v, Failed: %v", added, failed)
-```
+Create(indexStruct IndexStructure, waitForActiveShards ...int) error
 
-#### Update 
-`func Update(entities []map[string]interface{}, indexName string, waitToRefresh ...bool) (int, int, []error) {}`
+Delete(indexName string) error
 
-```
-entities := []map[string]interface{}{
-    {"Name": "name 3"},
-    {"Name": "name 4", "City": "city 4"},
-}
+GetMapping(indexName string) (map[string]interface{}, error)
 
-updated, failed, errs := elastic.Update(entities, "test")
-if len(errs) > 0 {
-    for _, err := range errs {
-        fmt.Errorf("Error from elastic.Update(): %v", err)
-    }
-}
-
-fmt.Sprintf("Updated: %v, Failed: %v", updated, failed)
-```
-
-#### Delete
-`func Delete(entities []map[string]interface{}, indexName string, waitToRefresh ...bool) (int, int, []error) {}`
-
-```
-entities := []map[string]interface{}{
-    {"Name": "name 3"},
-    {"Name": "name 4", "City": "city 4"},
-}
-
-deleted, failed, errs := elastic.Delete(entities, "test")
-if len(errs) > 0 {
-    for _, err := range errs {
-        fmt.Errorf("Error from elastic.Delete(): %v", err)
-    }
-}
-
-fmt.Sprintf("Deleted: %v, Failed: %v", deleted, failed)
+UpdateMapping(indexName string, props map[string]interface{}) error
 ```

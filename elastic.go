@@ -1,42 +1,14 @@
 package elastic
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
-    "encoding/json"
-    "net/http"
 )
-
-type Config struct {
-    Host string
-    Port int
-    User string
-    Password string
-}
-
-type SetParams struct {
-    ToAdd []map[string]interface{}
-    ToUpdate []map[string]interface{}
-    ToDelete []map[string]interface{}
-}
-
-type SetResult struct {
-    Added   int
-    Updated int
-    Deleted int
-    Failed  int
-    Errors  []error
-}
-
-var elasticConfig Config
-var elasticUrl string
-
-var lastQuery string
-
-const DateFormatElastic = "2006-01-02T15:04:05"
-const DateFormat = "2006-01-02 15:04:05"
 
 func Init(config Config) error {
     if config.Host == "" {
@@ -85,15 +57,36 @@ func toJson(entity interface{}) (string, error) {
 	return string(res), nil
 }
 
-func requestPostJson(url string, params string) (map[string]interface{}, error) {
-	lastQuery = url + "\n" + params
+func request(method Method, endpoint string, params string, waitToRefresh ...bool) (interface{}, error) {
+	if !IsInitiated() {
+        return nil, errors.New("elastic lib is not initiated")
+    }
 
-    resp, err := http.Post(url, "application/json", strings.NewReader(params))
+    if !strings.HasPrefix(endpoint, "/") {
+        endpoint = "/" + endpoint
+    }
+
+    url := elasticUrl + endpoint
+    if len(waitToRefresh) > 0 && waitToRefresh[0] {
+		url += "?refresh=wait_for"
+	}
+
+    if len(params) > 0 {
+	    lastQuery = url + "\n" + params
+    }
+
+    req, err := http.NewRequest(method.String(), url, strings.NewReader(params))
+	if err != nil {
+		return nil, err
+	}
+    req.Header.Add("Content-Type", "application/json")
+
+    resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make(map[string]interface{})
+	var result interface{}
 	d := json.NewDecoder(resp.Body)
 	// use json.Number instead of float64
 	d.UseNumber()
@@ -102,6 +95,15 @@ func requestPostJson(url string, params string) (map[string]interface{}, error) 
 	}
 
 	return result, nil
+}
+
+func Request(method Method, endpoint string, params string, waitToRefresh ...bool) (map[string]interface{}, error) {
+    result, err := request(method, endpoint, params, waitToRefresh...)
+    if err != nil {
+        return nil, err
+    }
+
+    return result.(map[string]interface{}), nil
 }
 
 func FromElasticDate(date string) (string, error) {
@@ -190,16 +192,15 @@ func getDeleteStmts(entities []map[string]interface{}, indexName string) (string
 	return stmts, nil
 }
 
-
-func parseSetItemResp(resp interface{}, action string) (bool, bool, error) {
-	resp, success := resp.(map[string]interface{})[action]
+func parseSetItemResp(resp interface{}, action Action) (bool, bool, error) {
+	resp, success := resp.(map[string]interface{})[action.String()]
 	if !success {
 		return false, false, nil
 	}
 
 	result, success := resp.(map[string]interface{})["result"]
 	if success {
-		if result.(string) == action+"d" {
+		if result.(string) == action.String()+"d" {
 			return true, true, nil
 		}
 
@@ -224,10 +225,10 @@ func parseSetResponse(result map[string]interface{}) SetResult {
 
 	items := result["items"].([]interface{})
 	for _, item := range items {
-		actions := []string{
-			"create",
-			"update",
-			"delete",
+		actions := []Action{
+			ActionCreate,
+		    ActionUpdate,
+			ActionDelete,
 		}
 
 		foundAction := false
@@ -276,85 +277,101 @@ func parseSetResponse(result map[string]interface{}) SetResult {
 	return res
 }
 
-func Search(query map[string]interface{}, indexName string) ([]interface{}, int, error) {
-    var entities []interface{}
-    var totalFound int
+func parseEditItemResponse(result map[string]interface{}, action string) (string, error) {
+    entId, entIdOk := result["_id"].(string)
+    status, statusOk := result["result"].(string)
+
+    if !entIdOk || !statusOk || status != action + "d" {
+        if !statusOk {
+            status, statusOk = result["error"].(string); if !statusOk {
+                status = "unknown"
+            }
+        }
+
+        return entId, errors.New(fmt.Sprintf("Failed to %s elastic entity: %v", action, status))
+    }
+
+    return entId, nil
+}
+
+func CatIndices(target ...string) ([]Indice, error) {
+    var indices []Indice
 
     if !IsInitiated() {
-        return entities, totalFound, errors.New("Elastic is not initiated")
+        return indices, errors.New("Elastic is not initiated")
     }
 
-	queryJson, err := toJson(query)
-	if err != nil {
-		return entities, totalFound, err
-	}
+    endpoint := "/_cat/indices"
+    if len(target) > 0 {
+        endpoint += "/" + target[0]
+    }
+    endpoint += "?format=json"
 
-	result, err := requestPostJson(elasticUrl+"/"+indexName+"/_search", queryJson)
-	if err != nil {
-		return entities, totalFound, err
-	}
-
-    elErr, ok := result["error"]; if ok {
-        return entities, totalFound, errors.New(fmt.Sprintf(
-            "[Elastic error] %v: %v", 
-            elErr.(map[string]interface{})["type"],
-            elErr.(map[string]interface{})["reason"],
-        ))
+    result, err := request(MethodGet, endpoint, "")
+    if err != nil {
+        return indices, err
     }
 
-    hits, ok := result["hits"].(map[string]interface{}); if !ok {
-        return entities, totalFound, errors.New("Failed to parse elastic result")
+    for _, i := range result.([]interface{}) {
+        item := i.(map[string]interface{})
+        index, ok := item["index"]; if !ok {
+            return indices, errors.New(fmt.Sprintf("No index found in cat indices response: %v", item))
+        }
+
+        prCnt, err := strconv.Atoi(item["pri"].(string)); if err != nil {
+            return indices, err
+        }
+        rCtn, err := strconv.Atoi(item["rep"].(string)); if err != nil {
+            return indices, err
+        }
+        dCnt, err := strconv.Atoi(item["docs.count"].(string)); if err != nil {
+            return indices, err
+        }
+        ddCnt, err := strconv.Atoi(item["docs.deleted"].(string)); if err != nil {
+            return indices, err
+        }
+
+        indices = append(indices, Indice{
+            Index: index.(string),
+            Health: item["health"].(string),
+            Status: item["status"].(string),
+            Uuid: item["uuid"].(string),
+            PrimariesCnt: prCnt, 
+            ReplicasCnt: rCtn, 
+            DocsCnt: dCnt, 
+            DocsDeletedCnt: ddCnt,
+            StoreSize: item["store.size"].(string),
+            PrimaryStoreSize: item["pri.store.size"].(string),
+        })
     }
 
-    entities = hits["hits"].([]interface{})
-    totalFound = hits["total"].(map[string]interface{})["value"].(int)
-
-    return entities, totalFound, nil
+    return indices, nil
 }
 
-func Set(entities SetParams, indexName string, waitToRefresh ...bool) SetResult {
-	addStmts, err := getAddStmts(entities.ToAdd, indexName)
-	if err != nil {
-		return SetResult{0, 0, 0, 0, []error{err}}
-	}
+func parseError(result map[string]interface{}) error {
+    elErr, ok := result["error"]; if !ok {
+        return nil
+    }
 
-	updateStmts, err := getUpdateStmts(entities.ToUpdate, indexName)
-	if err != nil {
-		return SetResult{0, 0, 0, 0, []error{err}}
-	}
-
-    deleteStmts, err := getDeleteStmts(entities.ToDelete, indexName)
-	if err != nil {
-        return SetResult{0, 0, 0, 0, []error{err}}
-	}
-    
-	apiCallUrl := elasticUrl + "/_bulk"
-	if len(waitToRefresh) > 0 && waitToRefresh[0] {
-		apiCallUrl += "?refresh=wait_for"
-	}
-
-	result, err := requestPostJson(apiCallUrl, addStmts + updateStmts + deleteStmts)
-	if err != nil {
-        return SetResult{0, 0, 0, 0, []error{err}}
-	}
-
-	return parseSetResponse(result)
+    return errors.New(fmt.Sprintf(
+        "[Elastic error] %v: %v", 
+        elErr.(map[string]interface{})["type"],
+        elErr.(map[string]interface{})["reason"],
+    ))
 }
 
-func Add(entities []map[string]interface{}, indexName string, waitToRefresh ...bool) (int, int, []error) {
-    result := Set(SetParams{ToAdd: entities}, indexName, waitToRefresh...)
+func Docs() *Doc {
+    if docs == nil {
+        docs = &doc{}
+    }
 
-    return result.Added, result.Failed, result.Errors
+    return docs
 }
 
-func Update(entities []map[string]interface{}, indexName string, waitToRefresh ...bool) (int, int, []error) {
-    result := Set(SetParams{ToUpdate: entities}, indexName, waitToRefresh...)
+func Indexes() *Index {
+    if indexes == nil {
+        indexes = &index{}
+    }
 
-    return result.Updated, result.Failed, result.Errors
-}
-
-func Delete(entities []map[string]interface{}, indexName string, waitToRefresh ...bool) (int, int, []error) {
-    result := Set(SetParams{ToDelete: entities}, indexName, waitToRefresh...)
-
-    return result.Deleted, result.Failed, result.Errors
+    return indexes
 }
